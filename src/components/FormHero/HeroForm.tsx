@@ -7,12 +7,13 @@ interface HeroFormData {
   first_name: string;
   middle_name: string;
   birth_date: string;
-  birth_locality_id: string;
+  birth_locality_name: string;
   death_date: string;
   rank_id: string;
   service_place_id: string;
   service_place_extra: string;
   extra_info: string;
+  cloud_link: string;
   photo: File | null;
   sender_full_name: string;
   sender_email: string;
@@ -31,12 +32,13 @@ export default function HeroForm() {
     first_name: '',
     middle_name: '',
     birth_date: '',
-    birth_locality_id: '',
+    birth_locality_name: '',
     death_date: '',
     rank_id: '',
     service_place_id: '',
     service_place_extra: '',
     extra_info: '',
+    cloud_link: '',
     photo: null,
     sender_full_name: '',
     sender_email: '',
@@ -47,23 +49,19 @@ export default function HeroForm() {
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [cloudStorageLink, setCloudStorageLink] = useState<string>('');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [dictionaries, setDictionaries] = useState<{
     ranks: { id: number; name: string }[];
-    localities: { id: number; name: string }[];
     servicePlaces: { id: number; name: string }[];
-  }>({ ranks: [], localities: [], servicePlaces: [] });
+  }>({ ranks: [], servicePlaces: [] });
 
   useEffect(() => {
     Promise.all([
       dictionariesApi.getRanks(),
-      dictionariesApi.getLocalities(),
       dictionariesApi.getServicePlaces(),
-    ]).then(([rR, rL, rS]) => {
+    ]).then(([rR, rS]) => {
       if (rR.data) setDictionaries(prev => ({ ...prev, ranks: Array.isArray(rR.data) ? rR.data : [] }));
-      if (rL.data) setDictionaries(prev => ({ ...prev, localities: Array.isArray(rL.data) ? rL.data : [] }));
       if (rS.data) setDictionaries(prev => ({ ...prev, servicePlaces: Array.isArray(rS.data) ? rS.data : [] }));
     });
   }, []);
@@ -79,11 +77,12 @@ export default function HeroForm() {
             first_name: String(d.first_name ?? ''),
             middle_name: String(d.middle_name ?? ''),
             birth_date: String(d.birth_date ?? ''),
-            birth_locality_id: d.birth_locality_id != null ? String(d.birth_locality_id) : '',
+            birth_locality_name: String(d.birth_locality ?? ''),
             death_date: String(d.death_date ?? ''),
             rank_id: d.rank_id != null ? String(d.rank_id) : '',
             service_place_id: d.service_place_id != null ? String(d.service_place_id) : '',
             extra_info: String(d.extra_info ?? ''),
+            cloud_link: String((d as any).cloud_link ?? ''),
             sender_full_name: String(d.sender_full_name ?? ''),
             sender_email: String(d.sender_email ?? ''),
             sender_phone: String(d.sender_phone ?? ''),
@@ -121,7 +120,7 @@ export default function HeroForm() {
     if (!formData.last_name.trim()) newErrors.last_name = 'Фамилия обязательна';
     if (!formData.first_name.trim()) newErrors.first_name = 'Имя обязательно';
     if (!formData.birth_date) newErrors.birth_date = 'Дата рождения обязательна';
-    if (!formData.birth_locality_id) newErrors.birth_locality_id = 'Выберите населённый пункт';
+    if (!formData.birth_locality_name.trim()) newErrors.birth_locality_name = 'Укажите населённый пункт';
     if (!formData.rank_id) newErrors.rank_id = 'Выберите звание';
     if (!formData.sender_full_name.trim()) newErrors.sender_full_name = 'Укажите ФИО отправителя';
     if (!formData.sender_email.trim()) newErrors.sender_email = 'Укажите email';
@@ -145,11 +144,12 @@ export default function HeroForm() {
     fd.append('first_name', formData.first_name.trim());
     fd.append('middle_name', formData.middle_name.trim());
     fd.append('birth_date', formData.birth_date);
-    fd.append('birth_locality_id', formData.birth_locality_id);
+    fd.append('birth_locality_name', formData.birth_locality_name.trim());
     if (formData.death_date) fd.append('death_date', formData.death_date);
     fd.append('rank_id', formData.rank_id);
     if (formData.service_place_id) fd.append('service_place_id', formData.service_place_id);
     if (formData.extra_info) fd.append('extra_info', formData.extra_info);
+    if (formData.cloud_link.trim()) fd.append('cloud_link', formData.cloud_link.trim());
     fd.append('sender_full_name', formData.sender_full_name.trim());
     fd.append('sender_email', formData.sender_email.trim());
     if (formData.sender_phone) fd.append('sender_phone', formData.sender_phone.trim());
@@ -162,7 +162,7 @@ export default function HeroForm() {
         first_name: formData.first_name.trim(),
         middle_name: formData.middle_name.trim() || null,
         birth_date: formData.birth_date,
-        birth_locality_id: formData.birth_locality_id || null,
+        birth_locality_name: formData.birth_locality_name.trim() || null,
         death_date: formData.death_date || null,
         rank_id: formData.rank_id,
         service_place_id: formData.service_place_id || null,
@@ -170,6 +170,7 @@ export default function HeroForm() {
         sender_full_name: formData.sender_full_name.trim(),
         sender_email: formData.sender_email.trim(),
         sender_phone: formData.sender_phone.trim() || null,
+        cloud_link: formData.cloud_link.trim() || null,
       });
       if (res.error) { setSubmitError(res.error); return; }
       setSubmitSuccess(true);
@@ -183,9 +184,21 @@ export default function HeroForm() {
     setSubmitSuccess(true);
   };
 
+  const isReadyToSubmit = Boolean(
+    formData.last_name.trim()
+    && formData.first_name.trim()
+    && formData.birth_date
+    && formData.birth_locality_name.trim()
+    && formData.rank_id
+    && formData.sender_full_name.trim()
+    && formData.sender_email.trim()
+    && formData.agree_to_offer
+    && formData.agree_to_personal_data
+  );
+
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-4xl mx-auto min-w-0">
-      <div className="card-container max-h-[90vh] overflow-y-auto flex flex-col gap-4 min-w-0">
+      <div className="card-container flex flex-col gap-4 min-w-0">
         <div className="min-w-0">
           <label htmlFor="last_name" className="block mb-2 font-medium text-accessible required">
             Фамилия *
@@ -196,7 +209,6 @@ export default function HeroForm() {
               className={`input-field ${errors.last_name ? 'border-red-500' : ''}`}
               value={formData.last_name}
               onChange={(e) => handleFioChange('last_name', e.target.value)}
-              placeholder="Иванов"
               required
               aria-describedby={errors.last_name ? 'last_name-error' : undefined}
             />
@@ -217,7 +229,6 @@ export default function HeroForm() {
               className={`input-field ${errors.first_name ? 'border-red-500' : ''}`}
               value={formData.first_name}
               onChange={(e) => handleFioChange('first_name', e.target.value)}
-              placeholder="Иван"
               required
             />
             {errors.first_name && (
@@ -235,7 +246,6 @@ export default function HeroForm() {
               className="input-field"
               value={formData.middle_name}
               onChange={(e) => handleFioChange('middle_name', e.target.value)}
-              placeholder="Иванович"
             />
           </div>
 
@@ -269,23 +279,20 @@ export default function HeroForm() {
           </div>
 
         <div>
-          <label htmlFor="birth_locality_id" className="block mb-2 font-medium text-accessible required">
+            <label htmlFor="birth_locality_name" className="block mb-2 font-medium text-accessible required">
               Населённый пункт рождения *
             </label>
-            <select
-              id="birth_locality_id"
-              className={`input-field ${errors.birth_locality_id ? 'border-red-500' : ''}`}
-              value={formData.birth_locality_id}
-              onChange={(e) => setFormData(prev => ({ ...prev, birth_locality_id: e.target.value }))}
+            <input
+              type="text"
+              id="birth_locality_name"
+              className={`input-field ${errors.birth_locality_name ? 'border-red-500' : ''}`}
+              value={formData.birth_locality_name}
+              onChange={(e) => setFormData(prev => ({ ...prev, birth_locality_name: e.target.value }))}
+              placeholder="Населённый пункт"
               required
-            >
-              <option value="">— Выберите —</option>
-              {dictionaries.localities.map((l) => (
-                <option key={l.id} value={String(l.id)}>{l.name}</option>
-              ))}
-            </select>
-            {errors.birth_locality_id && (
-              <p className="mt-1 text-sm text-red-600" role="alert">{errors.birth_locality_id}</p>
+            />
+            {errors.birth_locality_name && (
+              <p className="mt-1 text-sm text-red-600" role="alert">{errors.birth_locality_name}</p>
             )}
           </div>
 
@@ -314,7 +321,7 @@ export default function HeroForm() {
               onChange={(e) => setFormData(prev => ({ ...prev, rank_id: e.target.value }))}
               required
             >
-              <option value="">— Выберите —</option>
+              <option value=""></option>
               {dictionaries.ranks.map((r) => (
                 <option key={r.id} value={String(r.id)}>{r.name}</option>
               ))}
@@ -325,8 +332,8 @@ export default function HeroForm() {
           </div>
 
         <div>
-          <label htmlFor="service_place_id" className="block mb-2 font-medium text-accessible">
-              Место службы
+            <label htmlFor="service_place_id" className="block mb-2 font-medium text-accessible">
+              Род войск
             </label>
             <select
               id="service_place_id"
@@ -334,7 +341,7 @@ export default function HeroForm() {
               value={formData.service_place_id}
               onChange={(e) => setFormData(prev => ({ ...prev, service_place_id: e.target.value }))}
             >
-              <option value="">— Не указано —</option>
+              <option value=""></option>
               {dictionaries.servicePlaces.map((s) => (
                 <option key={s.id} value={String(s.id)}>{s.name}</option>
               ))}
@@ -393,25 +400,19 @@ export default function HeroForm() {
               </div>
             )}
           </div>
-
-        {cloudStorageLink && (
-          <div>
-              <label className="block mb-2 font-medium text-accessible">
-                Облачное хранилище
-              </label>
-              <p className="text-sm text-accessible-muted mb-2">
-                Загрузите дополнительные материалы:
-              </p>
-              <a
-                href={cloudStorageLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="button-primary"
-              >
-                Открыть облачное хранилище
-              </a>
-            </div>
-          )}
+        <div>
+          <label htmlFor="cloud_link" className="block mb-2 font-medium text-accessible">
+            Ссылка на облако
+          </label>
+          <input
+            type="url"
+            id="cloud_link"
+            className="input-field"
+            value={formData.cloud_link}
+            onChange={(e) => setFormData(prev => ({ ...prev, cloud_link: e.target.value }))}
+            placeholder="Вы можете поделиться ссылкой на облачное хранилище"
+          />
+        </div>
         <div className="min-w-0">
           <label htmlFor="sender_full_name" className="block mb-2 font-medium text-accessible">ФИО *</label>
             <input
@@ -420,7 +421,7 @@ export default function HeroForm() {
               className={`input-field w-full min-w-0 ${errors.sender_full_name ? 'border-red-500' : ''}`}
               value={formData.sender_full_name}
               onChange={(e) => setFormData(prev => ({ ...prev, sender_full_name: e.target.value }))}
-              placeholder="Иванов Иван Иванович"
+              placeholder="ФИО отправителя"
               required
             />
           {errors.sender_full_name && <p className="mt-1 text-sm text-red-600" role="alert">{errors.sender_full_name}</p>}
@@ -433,7 +434,7 @@ export default function HeroForm() {
               className={`input-field w-full min-w-0 ${errors.sender_email ? 'border-red-500' : ''}`}
               value={formData.sender_email}
               onChange={(e) => setFormData(prev => ({ ...prev, sender_email: e.target.value }))}
-              placeholder="example@mail.ru"
+              placeholder="email@example.com"
               required
             />
           {errors.sender_email && <p className="mt-1 text-sm text-red-600" role="alert">{errors.sender_email}</p>}
@@ -446,7 +447,7 @@ export default function HeroForm() {
               className="input-field w-full min-w-0"
               value={formData.sender_phone}
               onChange={(e) => setFormData(prev => ({ ...prev, sender_phone: e.target.value }))}
-              placeholder="+79001234567"
+              placeholder="+7XXXXXXXXXX"
             />
         </div>
         <div className="flex items-start gap-3">
@@ -470,7 +471,7 @@ export default function HeroForm() {
               onChange={(e) => setFormData(prev => ({ ...prev, agree_to_offer: e.target.checked }))}
             />
             <label htmlFor="agree_to_offer" className="text-accessible">
-              Принимаю условия оферты. <span className="text-accessible-muted">(Текст оферты — добавим позже)</span>
+              Принимаю условия оферты. (Текст оферты — добавим позже) *
             </label>
         </div>
         {errors.agree_to_offer && (
@@ -485,7 +486,7 @@ export default function HeroForm() {
               onChange={(e) => setFormData(prev => ({ ...prev, agree_to_personal_data: e.target.checked }))}
             />
             <label htmlFor="agree_to_personal_data" className="text-accessible">
-              Даю согласие на обработку персональных данных в соответствии с законодательством РФ.
+              Даю согласие на обработку персональных данных в соответствии с законодательством РФ. *
             </label>
           </div>
         {errors.agree_to_personal_data && (
@@ -503,6 +504,7 @@ export default function HeroForm() {
           <button
             type="submit"
             className="button-primary"
+            disabled={!isReadyToSubmit}
           >
             {editId ? 'Сохранить изменения' : 'Отправить заявку'}
           </button>

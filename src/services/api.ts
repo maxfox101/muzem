@@ -99,10 +99,12 @@ export interface ApplicationRow {
   birth_locality?: string | null;
   rank?: string | null;
   death_date?: string | null;
+  service_place?: string | null;
   rank_id?: number;
   birth_locality_id?: number;
   service_place_id?: number | null;
   extra_info?: string | null;
+  cloud_link?: string | null;
   sender_full_name?: string;
   sender_email?: string;
   sender_phone?: string | null;
@@ -127,9 +129,6 @@ export const supportApi = {
 };
 
 export const adminApi = {
-  getCloudStorageConfig: () => apiRequest('/admin/cloud-storage'),
-  updateCloudStorageConfig: (config: { enabled: boolean; link: string; max_size_mb: number }) =>
-    apiRequest('/admin/cloud-storage', { method: 'POST', body: JSON.stringify(config) }),
   getSupportContacts: () => apiRequest<{ email: string; phone: string }>('/admin/support-contacts'),
   updateSupportContacts: (data: { email: string; phone: string }) =>
     apiRequest('/admin/support-contacts', { method: 'PATCH', body: JSON.stringify(data) }),

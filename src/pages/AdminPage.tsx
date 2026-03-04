@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import CloudStorageSettings from '../components/AdminPanel/CloudStorageSettings';
 import { adminApi } from '../services/api';
 
 export default function AdminPage() {
@@ -52,11 +51,6 @@ export default function AdminPage() {
             {supportSaved ? '✓ Сохранено' : 'Сохранить'}
           </button>
         </div>
-      </div>
-
-      <div className="card-container">
-        <h2 className="text-xl font-bold mb-4 text-accessible">Облачное хранилище</h2>
-        <CloudStorageSettings />
       </div>
 
       <div className="card-container">

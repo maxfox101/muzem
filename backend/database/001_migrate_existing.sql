@@ -21,5 +21,8 @@ INSERT INTO cloud_storage_config (id, enabled, link, max_size_mb) VALUES
     (1, FALSE, '', 50)
 ON CONFLICT (id) DO NOTHING;
 
--- 4. Последовательность users.id (чтобы не было конфликта при вставке тестовых пользователей)
+-- 4. Колонка cloud_link в applications (для ссылки на облако)
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS cloud_link VARCHAR(500);
+
+-- 5. Последовательность users.id (чтобы не было конфликта при вставке тестовых пользователей)
 SELECT setval(pg_get_serial_sequence('users', 'id'), (SELECT COALESCE(MAX(id), 1) FROM users));

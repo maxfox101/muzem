@@ -250,7 +250,32 @@ app.get('/api/support', async (req, res) => {
 // Справочники (DISTINCT ON по name — без дубликатов в выпадающих списках)
 app.get('/api/dictionaries/ranks', async (req, res) => {
   try {
-    const result = await pool.query('SELECT DISTINCT ON (name) id, name FROM ranks ORDER BY name, id');
+    // Звания по старшинству, а не по алфавиту
+    const result = await pool.query(`
+      SELECT id, name
+      FROM ranks
+      ORDER BY CASE name
+        WHEN 'Рядовой' THEN 1
+        WHEN 'Ефрейтор' THEN 2
+        WHEN 'Младший сержант' THEN 3
+        WHEN 'Сержант' THEN 4
+        WHEN 'Старший сержант' THEN 5
+        WHEN 'Старшина' THEN 6
+        WHEN 'Прапорщик' THEN 7
+        WHEN 'Старший прапорщик' THEN 8
+        WHEN 'Младший лейтенант' THEN 9
+        WHEN 'Лейтенант' THEN 10
+        WHEN 'Старший лейтенант' THEN 11
+        WHEN 'Капитан' THEN 12
+        WHEN 'Майор' THEN 13
+        WHEN 'Подполковник' THEN 14
+        WHEN 'Полковник' THEN 15
+        WHEN 'Генерал-майор' THEN 16
+        WHEN 'Генерал-лейтенант' THEN 17
+        WHEN 'Генерал-полковник' THEN 18
+        ELSE 999
+      END, id
+    `);
     res.json({ data: result.rows });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -280,18 +305,34 @@ app.post('/api/applications', upload.single('photo'), async (req, res) => {
   try {
     const {
       last_name, first_name, middle_name,
-      birth_date, birth_locality_id, death_date,
-      rank_id, service_place_id, extra_info,
+      birth_date, birth_locality_name, death_date,
+      rank_id, service_place_id, extra_info, cloud_link,
       sender_full_name, sender_email, sender_phone,
       subscribe_to_news,
     } = req.body;
+
+    // Населённый пункт: свободный ввод, создаём запись в localities при необходимости
+    let birthLocalityId = null;
+    const birthLocalityNameNorm = String(birth_locality_name || '').trim();
+    if (birthLocalityNameNorm) {
+      const existingLoc = await pool.query('SELECT id FROM localities WHERE name = $1', [birthLocalityNameNorm]);
+      if (existingLoc.rows.length > 0) {
+        birthLocalityId = existingLoc.rows[0].id;
+      } else {
+        const insertedLoc = await pool.query(
+          'INSERT INTO localities (name) VALUES ($1) RETURNING id',
+          [birthLocalityNameNorm]
+        );
+        birthLocalityId = insertedLoc.rows[0].id;
+      }
+    }
 
     // Создание героя
     const heroResult = await pool.query(
       `INSERT INTO heroes (last_name, first_name, middle_name, birth_date, birth_locality_id, 
        death_date, rank_id, service_place_id, extra_info)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-      [last_name, first_name, middle_name || null, birth_date, birth_locality_id,
+      [last_name, first_name, middle_name || null, birth_date, birthLocalityId,
        death_date || null, rank_id, service_place_id || null, extra_info || null]
     );
 
@@ -299,9 +340,9 @@ app.post('/api/applications', upload.single('photo'), async (req, res) => {
 
     const userId = req.userId || 1;
     const appResult = await pool.query(
-      `INSERT INTO applications (hero_id, status, created_by_user_id, sender_full_name, sender_email, sender_phone)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [heroId, 'draft', userId, sender_full_name, sender_email, sender_phone || null]
+      `INSERT INTO applications (hero_id, status, created_by_user_id, sender_full_name, sender_email, sender_phone, cloud_link)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [heroId, 'draft', userId, sender_full_name, sender_email, sender_phone || null, (cloud_link && String(cloud_link).trim()) || null]
     );
     if (userId !== 1) {
       await pool.query(
@@ -330,12 +371,13 @@ app.post('/api/applications', upload.single('photo'), async (req, res) => {
 app.get('/api/applications', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT a.*, h.last_name, h.first_name, h.middle_name, h.birth_date,
-             l.name as birth_locality, r.name as rank
+      SELECT a.*, h.last_name, h.first_name, h.middle_name, h.birth_date, h.death_date,
+             l.name as birth_locality, r.name as rank, sp.name as service_place
       FROM applications a
       JOIN heroes h ON a.hero_id = h.id
       LEFT JOIN localities l ON h.birth_locality_id = l.id
       LEFT JOIN ranks r ON h.rank_id = r.id
+      LEFT JOIN service_places sp ON h.service_place_id = sp.id
       ORDER BY a.created_at DESC
     `);
     res.json({ data: result.rows });
@@ -399,13 +441,30 @@ app.patch('/api/applications/:id', upload.single('photo'), async (req, res) => {
     if (app.status !== 'draft' && app.status !== 'clarification') return res.status(400).json({ error: 'Редактирование недоступно после модерации' });
     const b = req.body || {};
     const heroId = (await pool.query('SELECT hero_id FROM applications WHERE id = $1', [req.params.id])).rows[0].hero_id;
+
+    // Населённый пункт при редактировании: свободный ввод, как при создании
+    let birthLocalityId = null;
+    const birthLocalityNameNorm = b.birth_locality_name ? String(b.birth_locality_name).trim() : '';
+    if (birthLocalityNameNorm) {
+      const existingLoc = await pool.query('SELECT id FROM localities WHERE name = $1', [birthLocalityNameNorm]);
+      if (existingLoc.rows.length > 0) {
+        birthLocalityId = existingLoc.rows[0].id;
+      } else {
+        const insertedLoc = await pool.query(
+          'INSERT INTO localities (name) VALUES ($1) RETURNING id',
+          [birthLocalityNameNorm]
+        );
+        birthLocalityId = insertedLoc.rows[0].id;
+      }
+    }
+
     await pool.query(
       `UPDATE heroes SET last_name=$1, first_name=$2, middle_name=$3, birth_date=$4, birth_locality_id=$5, death_date=$6, rank_id=$7, service_place_id=$8, extra_info=$9 WHERE id=$10`,
-      [b.last_name, b.first_name, b.middle_name || null, b.birth_date, b.birth_locality_id || null, b.death_date || null, b.rank_id, b.service_place_id || null, b.extra_info || null, heroId]
+      [b.last_name, b.first_name, b.middle_name || null, b.birth_date, birthLocalityId, b.death_date || null, b.rank_id, b.service_place_id || null, b.extra_info || null, heroId]
     );
     await pool.query(
-      'UPDATE applications SET sender_full_name=$1, sender_email=$2, sender_phone=$3 WHERE id=$4',
-      [b.sender_full_name, b.sender_email, b.sender_phone || null, req.params.id]
+      'UPDATE applications SET sender_full_name=$1, sender_email=$2, sender_phone=$3, cloud_link=$4 WHERE id=$5',
+      [b.sender_full_name, b.sender_email, b.sender_phone || null, (b.cloud_link && String(b.cloud_link).trim()) || null, req.params.id]
     );
     res.json({ message: 'Заявка обновлена' });
   } catch (e) {

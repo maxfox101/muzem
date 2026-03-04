@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS applications (
     sender_full_name VARCHAR(255) NOT NULL,
     sender_email VARCHAR(255) NOT NULL,
     sender_phone VARCHAR(20),
+    cloud_link VARCHAR(500),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from 'react';
-import ApplicationCard from '../components/ModeratorDashboard/ApplicationCard';
 import { applicationsApi, type ApplicationRow } from '../services/api';
 
 function mapRowToCard(row: ApplicationRow) {
@@ -85,6 +84,24 @@ export default function ModerationPage() {
     </th>
   );
 
+  const handleStatusChange = async (id: number, backendStatus: 'published' | 'rejected' | 'clarification') => {
+    let comment: string | undefined;
+    if (backendStatus === 'rejected' || backendStatus === 'clarification') {
+      const promptText = backendStatus === 'rejected'
+        ? 'Укажите причину отклонения (необязательно):'
+        : 'Укажите, что нужно уточнить (необязательно):';
+      // eslint-disable-next-line no-alert
+      const entered = window.prompt(promptText) ?? '';
+      comment = entered.trim() || undefined;
+    }
+    const res = await applicationsApi.updateStatus(id, backendStatus, comment);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    setApplications((prev) => prev.map((a) => (a.id === id ? { ...a, status: backendStatus } : a)));
+  };
+
   return (
     <div className="max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold mb-6 text-accessible">Заявки</h1>
@@ -129,19 +146,96 @@ export default function ModerationPage() {
           </div>
           {loading && <p className="text-accessible-muted">Загрузка…</p>}
           {!loading && filteredAndSorted.length === 0 && !error && <p className="text-accessible-muted">Заявок не найдено.</p>}
-          {!loading && filteredAndSorted.map((row) => (
-            <div key={row.id} className="mb-6">
-              <ApplicationCard
-                application={mapRowToCard(row)}
-                onStatusChange={async (id, status, reason) => {
-                  const backendStatus = status === 'accepted' ? 'published' : status === 'clarification' ? 'clarification' : 'rejected';
-                  const res = await applicationsApi.updateStatus(id, backendStatus, reason);
-                  if (res.error) { setError(res.error); return; }
-                  setApplications((prev) => prev.map((a) => (a.id === id ? { ...a, status: backendStatus } : a)));
-                }}
-              />
+          {!loading && (
+            <div className="card-container overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[1400px]">
+                <thead>
+                  <tr>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200">№</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">ФИО</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Дата рождения</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Дата гибели</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Населённый пункт</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Звание</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Род войск</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Доп. сведения</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Ссылка на облако</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Отправитель</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Контакты</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Дата заявки</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Статус</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Действия</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAndSorted.map((row) => {
+                    const fullName = [row.last_name, row.first_name, row.middle_name].filter(Boolean).join(' ');
+                    return (
+                      <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="p-3">{row.id}</td>
+                        <td className="p-3 whitespace-nowrap">{fullName}</td>
+                        <td className="p-3 whitespace-nowrap">{row.birth_date}</td>
+                        <td className="p-3 whitespace-nowrap">{row.death_date || '—'}</td>
+                        <td className="p-3 whitespace-nowrap">{row.birth_locality || '—'}</td>
+                        <td className="p-3 whitespace-nowrap">{row.rank || '—'}</td>
+                        <td className="p-3 whitespace-nowrap">{row.service_place || '—'}</td>
+                        <td className="p-3 max-w-xs text-sm truncate" title={row.extra_info || undefined}>
+                          {row.extra_info || '—'}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          {row.cloud_link ? (
+                            <a href={row.cloud_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                              Облако
+                            </a>
+                          ) : '—'}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">{row.sender_full_name || '—'}</td>
+                        <td className="p-3 text-sm whitespace-nowrap">
+                          {row.sender_email && <a href={`mailto:${row.sender_email}`} className="text-blue-600 underline">{row.sender_email}</a>}
+                          {row.sender_phone && <><br /><a href={`tel:${row.sender_phone}`} className="text-blue-600 underline">{row.sender_phone}</a></>}
+                          {!row.sender_email && !row.sender_phone && '—'}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">{row.created_at ? new Date(row.created_at).toLocaleDateString('ru') : '—'}</td>
+                        <td className="p-3 whitespace-nowrap">
+                          {row.status === 'draft' && 'Черновик'}
+                          {row.status === 'clarification' && 'На уточнении'}
+                          {row.status === 'published' && 'Принята'}
+                          {row.status === 'rejected' && 'Отклонена'}
+                          {!['draft', 'clarification', 'published', 'rejected'].includes(row.status) && row.status}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="button-primary px-3 py-2 text-sm"
+                              onClick={() => handleStatusChange(row.id, 'published')}
+                              disabled={row.status === 'published'}
+                            >
+                              Принять
+                            </button>
+                            <button
+                              type="button"
+                              className="button-secondary px-3 py-2 text-sm"
+                              onClick={() => handleStatusChange(row.id, 'clarification')}
+                            >
+                              Уточнить
+                            </button>
+                            <button
+                              type="button"
+                              className="button-secondary px-3 py-2 text-sm"
+                              onClick={() => handleStatusChange(row.id, 'rejected')}
+                            >
+                              Отклонить
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          ))}
+          )}
         </>
       )}
 
