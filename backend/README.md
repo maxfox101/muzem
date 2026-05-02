@@ -1,4 +1,4 @@
-# Бэкенд АИС «Быть воином — жить вечно»
+# Backend API сервиса заявок
 
 Node.js + Express + PostgreSQL
 

@@ -1,14 +1,14 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import type { AuthUser } from '../services/api';
-import { setStoredToken, getStoredToken } from '../services/api';
+import { setStoredToken, setFormAccessToken } from '../services/api';
 
-const STORAGE_KEY = 'hero_memorial_user';
+const STORAGE_KEY = 'app_user_profile';
 
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<{ error?: string }>;
-  register: (email: string, password: string, name?: string) => Promise<{ error?: string }>;
+  register: (email: string, password: string, name?: string, phone?: string) => Promise<{ error?: string }>;
   logout: () => void;
 }
 
@@ -62,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setUser(null);
     setStoredToken(null);
+    setFormAccessToken(null);
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 

@@ -31,14 +31,14 @@ export default function RegisterPage() {
       setError(res.error);
       return;
     }
-    navigate('/', { replace: true });
+    navigate('/form', { replace: true });
   };
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="card-container max-w-md w-full">
         <h1 className="text-2xl font-bold mb-2 text-accessible">Регистрация</h1>
-        <p className="text-accessible-muted mb-6">Создайте аккаунт, чтобы подавать заявки</p>
+        <p className="text-accessible-muted mb-6">Создайте аккаунт — далее откроется форма подачи заявки. Модерация и админка доступны отдельным входом по роли.</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
@@ -118,7 +118,7 @@ export default function RegisterPage() {
         </form>
 
         <p className="mt-6 text-sm text-accessible-muted text-center">
-          Уже есть аккаунт? <Link to="/login" className="text-blue-600 underline hover:no-underline">Войти</Link>
+          Уже есть аккаунт? <Link to="/login" className="text-blue-600 underline hover:no-underline">Войти</Link> — для модераторов и администраторов выберите на экране входа «Войти».
         </p>
       </div>
     </div>

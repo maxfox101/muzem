@@ -2,13 +2,31 @@
  * API сервисы для работы с бэкендом
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
-const TOKEN_KEY = 'hero_memorial_token';
+const TOKEN_KEY = 'app_user_token';
+const FORM_ACCESS_TOKEN_KEY = 'application_form_access_token';
 
 function getAuthHeaders(): Record<string, string> {
   const t = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null;
   return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+function getFormAccessHeaders(): Record<string, string> {
+  if (typeof sessionStorage === 'undefined') return {};
+  const t = sessionStorage.getItem(FORM_ACCESS_TOKEN_KEY);
+  return t ? { 'X-Form-Access-Token': t } : {};
+}
+
+export function setFormAccessToken(token: string | null) {
+  if (typeof sessionStorage === 'undefined') return;
+  if (token) sessionStorage.setItem(FORM_ACCESS_TOKEN_KEY, token);
+  else sessionStorage.removeItem(FORM_ACCESS_TOKEN_KEY);
+}
+
+export function getFormAccessToken(): string | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  return sessionStorage.getItem(FORM_ACCESS_TOKEN_KEY);
 }
 
 export function setStoredToken(token: string | null) {
@@ -58,6 +76,7 @@ export async function apiRequest<T>(
       ...options,
       headers: {
         ...getAuthHeaders(),
+        ...getFormAccessHeaders(),
         ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...(options.headers as Record<string, string>),
       },
@@ -105,10 +124,30 @@ export interface ApplicationRow {
   service_place_id?: number | null;
   extra_info?: string | null;
   cloud_link?: string | null;
+  photo_path?: string | null;
   sender_full_name?: string;
   sender_email?: string;
   sender_phone?: string | null;
+  custom_fields?: Record<string, string> | null;
   created_at?: string;
+}
+
+export interface CustomFormField {
+  key: string;
+  label: string;
+  type: 'text' | 'textarea' | 'select' | 'date';
+  required?: boolean;
+  options?: string[];
+}
+
+export interface ApplicationConfig {
+  is_enabled: boolean;
+  disabled_message: string;
+  custom_form_fields: CustomFormField[];
+  /** Показывать блок загрузки фотографии в форме заявки */
+  show_photo?: boolean;
+  /** Показывать поле «Ссылка на облако» */
+  show_cloud_link?: boolean;
 }
 
 // Справочники
@@ -128,10 +167,39 @@ export const supportApi = {
   get: () => apiRequest<{ email: string; phone: string }>('/support'),
 };
 
+export interface FormAccessCodeRow {
+  id: number;
+  code: string;
+  label: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export const applicationAccessApi = {
+  verify: (code: string) =>
+    apiRequest<{ token: string }>('/application-access/verify', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+};
+
 export const adminApi = {
+  getCloudStorageConfig: () => apiRequest<{ enabled: boolean; link: string; max_size_mb: number }>('/admin/cloud-storage'),
+  updateCloudStorageConfig: (data: { enabled: boolean; link: string; max_size_mb: number }) =>
+    apiRequest('/admin/cloud-storage', { method: 'POST', body: JSON.stringify(data) }),
   getSupportContacts: () => apiRequest<{ email: string; phone: string }>('/admin/support-contacts'),
   updateSupportContacts: (data: { email: string; phone: string }) =>
     apiRequest('/admin/support-contacts', { method: 'PATCH', body: JSON.stringify(data) }),
+  getApplicationConfig: () => apiRequest<ApplicationConfig>('/application-config'),
+  updateApplicationConfig: (data: ApplicationConfig) =>
+    apiRequest('/admin/application-config', { method: 'PATCH', body: JSON.stringify(data) }),
+  listFormAccessCodes: () => apiRequest<FormAccessCodeRow[]>('/admin/form-access-codes'),
+  createFormAccessCode: (data: { code: string; label?: string }) =>
+    apiRequest<FormAccessCodeRow>('/admin/form-access-codes', { method: 'POST', body: JSON.stringify(data) }),
+  setFormAccessCodeActive: (id: number, is_active: boolean) =>
+    apiRequest(`/admin/form-access-codes/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active }) }),
+  deleteFormAccessCode: (id: number) =>
+    apiRequest(`/admin/form-access-codes/${id}`, { method: 'DELETE' }),
 };
 
 // Подписка

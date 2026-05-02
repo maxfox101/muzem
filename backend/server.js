@@ -7,12 +7,18 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import nodemailer from 'nodemailer';
 import { fileURLToPath } from 'url';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'hero-memorial-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
+const FORM_ACCESS_SECRET = process.env.FORM_ACCESS_JWT_SECRET || `${JWT_SECRET}.form_access_v1`;
 
 function createToken(user) {
   return jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+}
+
+function createFormAccessToken(codeRowId) {
+  return jwt.sign({ typ: 'form_access', cid: codeRowId }, FORM_ACCESS_SECRET, { expiresIn: '30d' });
 }
 
 function authMiddleware(req, res, next) {
@@ -42,6 +48,163 @@ if (!fs.existsSync(uploadsDir)) {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+const mailFrom = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@hero.local';
+const smtpConfigured = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+const mailTransport = smtpConfigured
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: String(process.env.SMTP_SECURE || 'false') === 'true',
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    })
+  : null;
+
+async function sendMailSafe({ to, subject, text }) {
+  if (!to) return;
+  if (!mailTransport) {
+    console.log(`[mail:disabled] to=${to} subject="${subject}" text="${text}"`);
+    return;
+  }
+  try {
+    await mailTransport.sendMail({ from: mailFrom, to, subject, text });
+  } catch (e) {
+    console.warn('Mail send error:', e.message);
+  }
+}
+
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function parseCustomFormFields(value) {
+  let parsed = [];
+  if (Array.isArray(value)) parsed = value;
+  else if (typeof value === 'string') {
+    try {
+      const tmp = JSON.parse(value);
+      if (Array.isArray(tmp)) parsed = tmp;
+    } catch (_) {}
+  }
+  return parsed
+    .map((f) => ({
+      key: String(f?.key || '').trim(),
+      label: String(f?.label || '').trim(),
+      type: ['text', 'textarea', 'select', 'date'].includes(f?.type) ? f.type : 'text',
+      required: Boolean(f?.required),
+      options: Array.isArray(f?.options) ? f.options.map((o) => String(o).trim()).filter(Boolean) : [],
+    }))
+    .filter((f) => f.key && f.label);
+}
+
+async function ensureApplicationConfigSchema() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS application_submission_config (
+      id SERIAL PRIMARY KEY,
+      is_enabled BOOLEAN DEFAULT TRUE,
+      disabled_message TEXT DEFAULT '',
+      custom_form_fields JSONB DEFAULT '[]'::jsonb
+    )`
+  );
+  await pool.query(
+    `ALTER TABLE application_submission_config
+     ADD COLUMN IF NOT EXISTS custom_form_fields JSONB DEFAULT '[]'::jsonb`
+  );
+  await pool.query(
+    `ALTER TABLE application_submission_config
+     ADD COLUMN IF NOT EXISTS show_photo BOOLEAN DEFAULT TRUE`
+  );
+  await pool.query(
+    `ALTER TABLE application_submission_config
+     ADD COLUMN IF NOT EXISTS show_cloud_link BOOLEAN DEFAULT TRUE`
+  );
+  await pool.query(
+    `ALTER TABLE applications
+     ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'::jsonb`
+  );
+  await pool.query(
+    `INSERT INTO application_submission_config (id, is_enabled, disabled_message, custom_form_fields, show_photo, show_cloud_link)
+     VALUES (1, TRUE, '', '[]'::jsonb, TRUE, TRUE)
+     ON CONFLICT (id) DO NOTHING`
+  );
+}
+
+async function ensureFormAccessSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS application_access_codes (
+      id SERIAL PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      label TEXT DEFAULT '',
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+}
+
+async function seedDefaultFormAccessCode() {
+  await ensureFormAccessSchema();
+  const c = await pool.query('SELECT COUNT(*)::int AS n FROM application_access_codes');
+  if (c.rows[0].n === 0) {
+    await pool.query(
+      `INSERT INTO application_access_codes (code, label) VALUES ($1, $2)`,
+      ['invite-1', 'Начальный код — смените в админ-панели']
+    );
+    console.log('Доступ к форме: создан код invite-1 (измените в разделе «Коды доступа»).');
+  }
+}
+
+function requireAdmin(req, res, next) {
+  (async () => {
+    if (!req.userId) {
+      res.status(401).json({ error: 'Необходима авторизация' });
+      return;
+    }
+    const r = await pool.query('SELECT role FROM users WHERE id = $1', [req.userId]);
+    if (r.rows[0]?.role !== 'admin') {
+      res.status(403).json({ error: 'Только для администратора' });
+      return;
+    }
+    next();
+  })().catch((e) => res.status(500).json({ error: e.message }));
+}
+
+function requireFormAccess(req, res, next) {
+  (async () => {
+    const raw = req.headers['x-form-access-token'];
+    if (!raw || typeof raw !== 'string') {
+      res.status(403).json({
+        error: 'Нужен доступ к форме: введите код приглашения или откройте ссылку с кодом от администратора.',
+      });
+      return;
+    }
+    let cid;
+    try {
+      const p = jwt.verify(String(raw).trim(), FORM_ACCESS_SECRET);
+      if (p.typ !== 'form_access') throw new Error('bad type');
+      cid = Number(p.cid);
+      if (!Number.isFinite(cid)) throw new Error('bad cid');
+    } catch {
+      res.status(403).json({ error: 'Код доступа недействителен или истёк. Запросите новую ссылку.' });
+      return;
+    }
+    const ok = await pool.query(
+      'SELECT 1 FROM application_access_codes WHERE id = $1 AND is_active = TRUE',
+      [cid]
+    );
+    if (ok.rows.length === 0) {
+      res.status(403).json({ error: 'Этот код доступа отключён. Обратитесь к администратору.' });
+      return;
+    }
+    next();
+  })().catch((e) => res.status(500).json({ error: e.message }));
+}
 
 // PostgreSQL подключение
 const dbConfig = {
@@ -92,7 +255,7 @@ const upload = multer({
 
 // Проверка работы сервера (без БД)
 app.get('/', (req, res) => {
-  res.json({ ok: true, message: 'АИС «Быть воином — жить вечно» API', port: PORT });
+  res.json({ ok: true, message: 'API сервиса заявок', port: PORT });
 });
 
 app.get('/api/health', (req, res) => {
@@ -239,9 +402,9 @@ app.patch('/api/profile', async (req, res) => {
 app.get('/api/support', async (req, res) => {
   try {
     const r = await pool.query('SELECT email, phone FROM support_contacts WHERE id = 1');
-    res.json({ data: r.rows[0] || { email: 'support@sambek-museum.ru', phone: '+7 (863) 123-45-67' } });
+    res.json({ data: r.rows[0] || { email: 'support@example.com', phone: '+7 (000) 000-00-00' } });
   } catch (e) {
-    res.json({ data: { email: 'support@sambek-museum.ru', phone: '+7 (863) 123-45-67' } });
+    res.json({ data: { email: 'support@example.com', phone: '+7 (000) 000-00-00' } });
   }
 });
 
@@ -300,16 +463,93 @@ app.get('/api/dictionaries/service-places', async (req, res) => {
   }
 });
 
+// Доступ к форме заявки (код приглашения или ссылка ?code=)
+app.post('/api/application-access/verify', async (req, res) => {
+  try {
+    await ensureFormAccessSchema();
+    const code = String(req.body?.code || '').trim();
+    if (!code) return res.status(400).json({ error: 'Укажите код доступа' });
+    const r = await pool.query(
+      'SELECT id FROM application_access_codes WHERE code = $1 AND is_active = TRUE',
+      [code]
+    );
+    if (r.rows.length === 0) return res.status(403).json({ error: 'Неверный или отключённый код доступа' });
+    const token = createFormAccessToken(r.rows[0].id);
+    res.json({ data: { token } });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/form-access-codes', requireAdmin, async (req, res) => {
+  try {
+    await ensureFormAccessSchema();
+    const r = await pool.query(
+      'SELECT id, code, label, is_active, created_at FROM application_access_codes ORDER BY id DESC'
+    );
+    res.json({ data: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/form-access-codes', requireAdmin, async (req, res) => {
+  try {
+    await ensureFormAccessSchema();
+    const code = String(req.body?.code || '').trim();
+    const label = String(req.body?.label || '').trim();
+    if (!code) return res.status(400).json({ error: 'Укажите код' });
+    const r = await pool.query(
+      'INSERT INTO application_access_codes (code, label) VALUES ($1, $2) RETURNING id, code, label, is_active, created_at',
+      [code, label]
+    );
+    res.status(201).json({ data: r.rows[0] });
+  } catch (e) {
+    if (e.code === '23505') return res.status(400).json({ error: 'Такой код уже есть' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/form-access-codes/:id', requireAdmin, async (req, res) => {
+  try {
+    const { is_active } = req.body || {};
+    await pool.query('UPDATE application_access_codes SET is_active = $1 WHERE id = $2', [
+      is_active !== false,
+      req.params.id,
+    ]);
+    res.json({ message: 'Обновлено' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/form-access-codes/:id', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM application_access_codes WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Удалено' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Заявки
-app.post('/api/applications', upload.single('photo'), async (req, res) => {
+app.post('/api/applications', requireFormAccess, upload.single('photo'), async (req, res) => {
   try {
     const {
       last_name, first_name, middle_name,
       birth_date, birth_locality_name, death_date,
       rank_id, service_place_id, extra_info, cloud_link,
       sender_full_name, sender_email, sender_phone,
-      subscribe_to_news,
+      subscribe_to_news, custom_fields,
     } = req.body;
+    let currentCfg = { is_enabled: true, disabled_message: '' };
+    try {
+      const cfg = await pool.query('SELECT is_enabled, disabled_message FROM application_submission_config WHERE id = 1');
+      currentCfg = cfg.rows[0] || currentCfg;
+    } catch (_) {}
+    if (!currentCfg.is_enabled) {
+      return res.status(403).json({ error: currentCfg.disabled_message || 'Приём заявок временно отключён' });
+    }
 
     // Населённый пункт: свободный ввод, создаём запись в localities при необходимости
     let birthLocalityId = null;
@@ -340,9 +580,9 @@ app.post('/api/applications', upload.single('photo'), async (req, res) => {
 
     const userId = req.userId || 1;
     const appResult = await pool.query(
-      `INSERT INTO applications (hero_id, status, created_by_user_id, sender_full_name, sender_email, sender_phone, cloud_link)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [heroId, 'draft', userId, sender_full_name, sender_email, sender_phone || null, (cloud_link && String(cloud_link).trim()) || null]
+      `INSERT INTO applications (hero_id, status, created_by_user_id, sender_full_name, sender_email, sender_phone, cloud_link, custom_fields)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING id`,
+      [heroId, 'draft', userId, sender_full_name, sender_email, sender_phone || null, (cloud_link && String(cloud_link).trim()) || null, JSON.stringify(parseJsonObject(custom_fields))]
     );
     if (userId !== 1) {
       await pool.query(
@@ -362,6 +602,12 @@ app.post('/api/applications', upload.single('photo'), async (req, res) => {
       );
     }
 
+    await sendMailSafe({
+      to: sender_email,
+      subject: 'Заявка принята в работу',
+      text: `Здравствуйте, ${sender_full_name || 'пользователь'}!\n\nВаша заявка №${appId} успешно отправлена и передана на модерацию.`,
+    });
+
     res.json({ data: { id: appId, hero_id: heroId }, message: 'Заявка создана' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -372,12 +618,20 @@ app.get('/api/applications', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT a.*, h.last_name, h.first_name, h.middle_name, h.birth_date, h.death_date,
-             l.name as birth_locality, r.name as rank, sp.name as service_place
+             l.name as birth_locality, r.name as rank, sp.name as service_place,
+             m.file_path as photo_path
       FROM applications a
       JOIN heroes h ON a.hero_id = h.id
       LEFT JOIN localities l ON h.birth_locality_id = l.id
       LEFT JOIN ranks r ON h.rank_id = r.id
       LEFT JOIN service_places sp ON h.service_place_id = sp.id
+      LEFT JOIN LATERAL (
+        SELECT hm.file_path
+        FROM hero_media hm
+        WHERE hm.application_id = a.id
+        ORDER BY hm.created_at DESC
+        LIMIT 1
+      ) m ON TRUE
       ORDER BY a.created_at DESC
     `);
     res.json({ data: result.rows });
@@ -463,8 +717,8 @@ app.patch('/api/applications/:id', upload.single('photo'), async (req, res) => {
       [b.last_name, b.first_name, b.middle_name || null, b.birth_date, birthLocalityId, b.death_date || null, b.rank_id, b.service_place_id || null, b.extra_info || null, heroId]
     );
     await pool.query(
-      'UPDATE applications SET sender_full_name=$1, sender_email=$2, sender_phone=$3, cloud_link=$4 WHERE id=$5',
-      [b.sender_full_name, b.sender_email, b.sender_phone || null, (b.cloud_link && String(b.cloud_link).trim()) || null, req.params.id]
+      'UPDATE applications SET sender_full_name=$1, sender_email=$2, sender_phone=$3, cloud_link=$4, custom_fields=$5::jsonb WHERE id=$6',
+      [b.sender_full_name, b.sender_email, b.sender_phone || null, (b.cloud_link && String(b.cloud_link).trim()) || null, JSON.stringify(parseJsonObject(b.custom_fields)), req.params.id]
     );
     res.json({ message: 'Заявка обновлена' });
   } catch (e) {
@@ -487,6 +741,30 @@ app.patch('/api/applications/:id/status', async (req, res) => {
         'UPDATE heroes SET is_published = TRUE WHERE id = (SELECT hero_id FROM applications WHERE id = $1)',
         [id]
       );
+    }
+
+    const appRow = await pool.query(
+      `SELECT a.id, a.sender_email, a.sender_full_name, h.last_name, h.first_name
+       FROM applications a
+       JOIN heroes h ON h.id = a.hero_id
+       WHERE a.id = $1`,
+      [id]
+    );
+    const row = appRow.rows[0];
+    if (row?.sender_email) {
+      const statusMap = {
+        published: 'Принята',
+        rejected: 'Отклонена',
+        clarification: 'Нужно уточнение',
+        draft: 'Черновик',
+      };
+      const statusLabel = statusMap[status] || status;
+      const name = [row.last_name, row.first_name].filter(Boolean).join(' ');
+      await sendMailSafe({
+        to: row.sender_email,
+        subject: `Обновление по заявке №${id}`,
+        text: `Здравствуйте, ${row.sender_full_name || 'пользователь'}!\n\nСтатус заявки №${id} (${name}) изменён: ${statusLabel}.${comment ? `\nКомментарий модератора: ${comment}` : ''}`,
+      });
     }
 
     res.json({ message: 'Статус обновлён' });
@@ -526,7 +804,7 @@ app.get('/api/admin/support-contacts', async (req, res) => {
     const r = await pool.query('SELECT email, phone FROM support_contacts WHERE id = 1');
     res.json({ data: r.rows[0] || { email: '', phone: '' } });
   } catch (e) {
-    res.json({ data: { email: 'support@sambek-museum.ru', phone: '+7 (863) 123-45-67' } });
+    res.json({ data: { email: 'support@example.com', phone: '+7 (000) 000-00-00' } });
   }
 });
 
@@ -545,6 +823,58 @@ app.patch('/api/admin/support-contacts', async (req, res) => {
       await pool.query('INSERT INTO support_contacts (id, email, phone) VALUES (1, $1, $2) ON CONFLICT (id) DO NOTHING', [String(req.body?.email ?? '').trim(), String(req.body?.phone ?? '').trim()]);
       return res.json({ message: 'Контакты поддержки обновлены' });
     }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/application-config', async (req, res) => {
+  try {
+    await ensureApplicationConfigSchema();
+    const r = await pool.query(
+      'SELECT is_enabled, disabled_message, custom_form_fields, show_photo, show_cloud_link FROM application_submission_config WHERE id = 1'
+    );
+    res.json({
+      data: r.rows[0] || {
+        is_enabled: true,
+        disabled_message: '',
+        custom_form_fields: [],
+        show_photo: true,
+        show_cloud_link: true,
+      },
+    });
+  } catch (e) {
+    res.json({
+      data: {
+        is_enabled: true,
+        disabled_message: '',
+        custom_form_fields: [],
+        show_photo: true,
+        show_cloud_link: true,
+      },
+    });
+  }
+});
+
+app.patch('/api/admin/application-config', async (req, res) => {
+  try {
+    await ensureApplicationConfigSchema();
+    const { is_enabled, disabled_message, custom_form_fields, show_photo, show_cloud_link } = req.body || {};
+    const safeFields = parseCustomFormFields(custom_form_fields);
+    const sp = show_photo !== false;
+    const scl = show_cloud_link !== false;
+    await pool.query(
+      `INSERT INTO application_submission_config (id, is_enabled, disabled_message, custom_form_fields, show_photo, show_cloud_link)
+       VALUES (1, $1, $2, $3::jsonb, $4, $5)
+       ON CONFLICT (id) DO UPDATE SET
+         is_enabled = $1,
+         disabled_message = $2,
+         custom_form_fields = $3::jsonb,
+         show_photo = $4,
+         show_cloud_link = $5`,
+      [is_enabled !== false, String(disabled_message ?? '').trim(), JSON.stringify(safeFields), sp, scl]
+    );
+    res.json({ message: 'Конфигурация приёма заявок обновлена' });
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
@@ -594,6 +924,8 @@ async function start() {
   try {
     await pool.query('SELECT 1');
     console.log('БД: подключено');
+    await ensureApplicationConfigSchema();
+    await seedDefaultFormAccessCode();
     await seedTestUsers();
     if (process.env.FIX_DICTIONARIES_UTF8 === '1') {
       await fixDictionariesUtf8();

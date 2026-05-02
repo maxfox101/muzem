@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { applicationsApi, type ApplicationRow } from '../services/api';
 
 function statusLabel(s: string) {
@@ -9,7 +9,6 @@ function statusLabel(s: string) {
 
 export default function CabinetDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const [app, setApp] = useState<ApplicationRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

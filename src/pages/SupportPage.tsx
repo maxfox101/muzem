@@ -10,8 +10,8 @@ export default function SupportPage() {
     });
   }, []);
 
-  const email = contacts?.email || 'support@sambek-museum.ru';
-  const phone = contacts?.phone || '+7 (863) 123-45-67';
+  const email = contacts?.email || 'support@example.com';
+  const phone = contacts?.phone || '+7 (000) 000-00-00';
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -32,9 +32,6 @@ export default function SupportPage() {
             </a>
           </p>
         </div>
-        <p className="text-sm text-accessible-muted mt-4">
-          ГБУК РО «Народный военно-исторический музей Великой Отечественной войны "Самбекские высоты"»
-        </p>
       </div>
     </div>
   );

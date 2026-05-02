@@ -1,17 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { applicationsApi, type ApplicationRow } from '../services/api';
 
-function mapRowToCard(row: ApplicationRow) {
-  const fullName = [row.last_name, row.first_name, row.middle_name].filter(Boolean).join(' ');
-  return {
-    id: row.id,
-    hero: { full_name: fullName, birth_date: row.birth_date, birth_locality: row.birth_locality || '—', rank: row.rank || '—', photo_url: undefined },
-    status: row.status,
-    sender_email: row.sender_email,
-    sender_phone: row.sender_phone ?? undefined,
-  };
-}
-
 type SortKey = 'created_at' | 'status' | 'name' | 'birth_date' | 'birth_locality' | 'rank';
 type StatusFilter = 'all' | 'draft' | 'clarification' | 'published' | 'rejected';
 
@@ -27,6 +16,7 @@ export default function ModerationPage() {
   const [tableDesc, setTableDesc] = useState(true);
   const [filterLocality, setFilterLocality] = useState('');
   const [filterRank, setFilterRank] = useState('');
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -102,6 +92,12 @@ export default function ModerationPage() {
     setApplications((prev) => prev.map((a) => (a.id === id ? { ...a, status: backendStatus } : a)));
   };
 
+  const getPhotoUrl = (photoPath?: string | null) => {
+    if (!photoPath) return null;
+    if (photoPath.startsWith('http://') || photoPath.startsWith('https://')) return photoPath;
+    return photoPath.replace(/^public[\\/]/, '/').replace(/\\/g, '/');
+  };
+
   return (
     <div className="max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold mb-6 text-accessible">Заявки</h1>
@@ -148,18 +144,18 @@ export default function ModerationPage() {
           {!loading && filteredAndSorted.length === 0 && !error && <p className="text-accessible-muted">Заявок не найдено.</p>}
           {!loading && (
             <div className="card-container overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[1400px]">
+              <table className="w-full text-left border-collapse min-w-[1500px]">
                 <thead>
                   <tr>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200">№</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">ФИО</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Дата рождения</th>
-                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Дата гибели</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Населённый пункт</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Звание</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Род войск</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Доп. сведения</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Ссылка на облако</th>
+                    <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Фото</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Отправитель</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Контакты</th>
                     <th className="p-3 font-semibold text-accessible border-b-2 border-gray-200 whitespace-nowrap">Дата заявки</th>
@@ -171,40 +167,57 @@ export default function ModerationPage() {
                   {filteredAndSorted.map((row) => {
                     const fullName = [row.last_name, row.first_name, row.middle_name].filter(Boolean).join(' ');
                     return (
-                      <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="p-3">{row.id}</td>
-                        <td className="p-3 whitespace-nowrap">{fullName}</td>
-                        <td className="p-3 whitespace-nowrap">{row.birth_date}</td>
-                        <td className="p-3 whitespace-nowrap">{row.death_date || '—'}</td>
-                        <td className="p-3 whitespace-nowrap">{row.birth_locality || '—'}</td>
-                        <td className="p-3 whitespace-nowrap">{row.rank || '—'}</td>
-                        <td className="p-3 whitespace-nowrap">{row.service_place || '—'}</td>
-                        <td className="p-3 max-w-xs text-sm truncate" title={row.extra_info || undefined}>
+                      <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50 align-top">
+                        <td className="p-3 align-top">{row.id}</td>
+                        <td className="p-3 whitespace-nowrap align-top">{fullName}</td>
+                        <td className="p-3 whitespace-nowrap align-top">{row.birth_date}</td>
+                        <td className="p-3 whitespace-nowrap align-top">{row.birth_locality || '—'}</td>
+                        <td className="p-3 whitespace-nowrap align-top">{row.rank || '—'}</td>
+                        <td className="p-3 whitespace-nowrap align-top">{row.service_place || '—'}</td>
+                        <td className="p-3 max-w-xs text-sm truncate align-top" title={row.extra_info || undefined}>
                           {row.extra_info || '—'}
                         </td>
-                        <td className="p-3 whitespace-nowrap">
+                        <td className="p-3 whitespace-nowrap align-top">
                           {row.cloud_link ? (
                             <a href={row.cloud_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                               Облако
                             </a>
                           ) : '—'}
                         </td>
-                        <td className="p-3 whitespace-nowrap">{row.sender_full_name || '—'}</td>
-                        <td className="p-3 text-sm whitespace-nowrap">
+                        <td className="p-3 align-top">
+                          {getPhotoUrl(row.photo_path) ? (
+                            <div className="flex items-center gap-2">
+                              <img
+                                src={getPhotoUrl(row.photo_path) || ''}
+                                alt={fullName || 'Фото героя'}
+                                className="h-12 w-10 object-cover rounded border border-gray-200"
+                              />
+                              <button
+                                type="button"
+                                className="button-secondary px-2 py-1 text-xs"
+                                onClick={() => setPreviewPhotoUrl(getPhotoUrl(row.photo_path))}
+                              >
+                                Открыть
+                              </button>
+                            </div>
+                          ) : '—'}
+                        </td>
+                        <td className="p-3 whitespace-nowrap align-top">{row.sender_full_name || '—'}</td>
+                        <td className="p-3 text-sm whitespace-nowrap align-top">
                           {row.sender_email && <a href={`mailto:${row.sender_email}`} className="text-blue-600 underline">{row.sender_email}</a>}
                           {row.sender_phone && <><br /><a href={`tel:${row.sender_phone}`} className="text-blue-600 underline">{row.sender_phone}</a></>}
                           {!row.sender_email && !row.sender_phone && '—'}
                         </td>
-                        <td className="p-3 whitespace-nowrap">{row.created_at ? new Date(row.created_at).toLocaleDateString('ru') : '—'}</td>
-                        <td className="p-3 whitespace-nowrap">
+                        <td className="p-3 whitespace-nowrap align-top">{row.created_at ? new Date(row.created_at).toLocaleDateString('ru') : '—'}</td>
+                        <td className="p-3 whitespace-nowrap align-top">
                           {row.status === 'draft' && 'Черновик'}
                           {row.status === 'clarification' && 'На уточнении'}
                           {row.status === 'published' && 'Принята'}
                           {row.status === 'rejected' && 'Отклонена'}
                           {!['draft', 'clarification', 'published', 'rejected'].includes(row.status) && row.status}
                         </td>
-                        <td className="p-3 whitespace-nowrap">
-                          <div className="flex flex-wrap gap-2">
+                        <td className="p-3 whitespace-nowrap align-top">
+                          <div className="flex flex-nowrap items-center gap-2">
                             <button
                               type="button"
                               className="button-primary px-3 py-2 text-sm"
@@ -304,6 +317,23 @@ export default function ModerationPage() {
             </div>
           )}
         </>
+      )}
+
+      {previewPhotoUrl && (
+        <div
+          className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+          onClick={() => setPreviewPhotoUrl(null)}
+        >
+          <div className="max-w-3xl w-full flex flex-col items-end gap-3">
+            <button type="button" className="button-secondary" onClick={() => setPreviewPhotoUrl(null)}>Закрыть</button>
+            <img
+              src={previewPhotoUrl}
+              alt="Фото героя"
+              className="w-full max-h-[85vh] object-contain rounded-xl bg-white p-2"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS applications (
     sender_email VARCHAR(255) NOT NULL,
     sender_phone VARCHAR(20),
     cloud_link VARCHAR(500),
+    custom_fields JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -129,8 +130,30 @@ CREATE TABLE IF NOT EXISTS support_contacts (
     phone VARCHAR(50)
 );
 INSERT INTO support_contacts (id, email, phone) VALUES
-    (1, 'support@sambek-museum.ru', '+7 (863) 123-45-67')
+    (1, 'support@example.com', '+7 (000) 000-00-00')
 ON CONFLICT (id) DO NOTHING;
+
+-- Конфигурация приёма заявок
+CREATE TABLE IF NOT EXISTS application_submission_config (
+    id SERIAL PRIMARY KEY,
+    is_enabled BOOLEAN DEFAULT TRUE,
+    disabled_message TEXT DEFAULT '',
+    custom_form_fields JSONB DEFAULT '[]'::jsonb,
+    show_photo BOOLEAN DEFAULT TRUE,
+    show_cloud_link BOOLEAN DEFAULT TRUE
+);
+INSERT INTO application_submission_config (id, is_enabled, disabled_message, custom_form_fields, show_photo, show_cloud_link)
+VALUES (1, TRUE, '', '[]'::jsonb, TRUE, TRUE)
+ON CONFLICT (id) DO NOTHING;
+
+-- Коды доступа к форме заявки (приглашение)
+CREATE TABLE IF NOT EXISTS application_access_codes (
+    id SERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    label TEXT DEFAULT '',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- Вставка начальных данных
 INSERT INTO ranks (name) VALUES

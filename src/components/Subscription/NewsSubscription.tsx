@@ -64,7 +64,7 @@ export default function NewsSubscription() {
               defaultChecked
             />
             <label htmlFor="subscribe_check" className="text-accessible">
-              Хочу получать акции музея «Самбекские высоты»
+              Хочу получать новости и уведомления по email
             </label>
           </div>
 
